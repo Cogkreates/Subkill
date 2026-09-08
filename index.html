@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Subkill — subscription agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #E7E9E2;
+    --paper-raised: #DEE1D8;
+    --ink: #1E2A26;
+    --ink-soft: #55605A;
+    --rule: #C7C7B8;
+    --brick: #A8402B;
+    --pine: #3B6E58;
+    --ochre: #B0812A;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+
+  header.top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  h1 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 30px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  .tagline {
+    color: var(--ink-soft);
+    font-size: 14px;
+    margin: 4px 0 40px;
+    max-width: 46ch;
+  }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: var(--paper-raised);
+    border-radius: 3px;
+    margin-bottom: 32px;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+  }
+
+  button {
+    font-family: 'Inter', sans-serif;
+    font-size: 13.5px;
+    font-weight: 500;
+    border: none;
+    border-radius: 3px;
+    padding: 9px 16px;
+    cursor: pointer;
+    background: var(--ink);
+    color: var(--paper);
+  }
+  button.ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--rule);
+  }
+  button.small { padding: 6px 12px; font-size: 12.5px; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 18px;
+    align-items: center;
+    padding: 18px 4px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .row:first-of-type { border-top: 1px solid var(--rule); }
+
+  .merchant {
+    font-family: 'Fraunces', serif;
+    font-size: 18px;
+    font-weight: 500;
+  }
+  .merchant .meta {
+    display: block;
+    font-family: 'Inter', sans-serif;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
+
+  .amount {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .renewal {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .countdown {
+    display: block;
+    font-size: 11px;
+    color: var(--ochre);
+    margin-top: 2px;
+  }
+
+  .pill {
+    display: inline-block;
+    font-size: 11.5px;
+    padding: 3px 9px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .pill.active { background: rgba(59,110,88,0.15); color: var(--pine); }
+  .pill.pending_confirmation { background: rgba(176,129,42,0.18); color: var(--ochre); }
+  .pill.paused { background: rgba(168,64,43,0.15); color: var(--brick); }
+  .pill.cancelled { background: rgba(85,96,90,0.15); color: var(--ink-soft); }
+
+  .empty {
+    padding: 60px 0;
+    text-align: center;
+    color: var(--ink-soft);
+  }
+  .empty p { max-width: 40ch; margin: 8px auto 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Subkill</h1>
+  </header>
+  <p class="tagline">Every subscription your inbox knows about, watched for you. It asks before a renewal goes through, and pauses the card if you go quiet.</p>
+
+  <div class="status-bar" id="statusBar">
+    <span id="statusText">Checking connection…</span>
+    <span id="statusActions"></span>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+const CURRENCY_SYMBOL = { NGN: '₦', USD: '$', GBP: '£', EUR: '€' };
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  return res.json();
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function daysUntil(d) {
+  if (!d) return null;
+  const diff = Math.ceil((new Date(d) - new Date().setHours(0,0,0,0)) / 86400000);
+  return diff;
+}
+
+function countdownLabel(days) {
+  if (days === null) return '';
+  if (days < 0) return 'overdue';
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days}d`;
+}
+
+function statusLabel(s) {
+  return { active: 'Active', pending_confirmation: 'Awaiting your reply', paused: 'Paused', cancelled: 'Cancelled' }[s] || s;
+}
+
+async function render() {
+  const me = await api('/api/me');
+  const statusText = document.getElementById('statusText');
+  const statusActions = document.getElementById('statusActions');
+  const list = document.getElementById('list');
+
+  if (!me.connected) {
+    statusText.textContent = 'Not connected to Gmail yet.';
+    statusActions.innerHTML = '<button onclick="location.href=\'/auth/google\'">Connect Gmail</button>';
+    list.innerHTML = '<div class="empty"><strong>Nothing to show yet.</strong><p>Connect your Gmail and the agent will start reading for subscription and trial emails — nothing is charged or cancelled without your say-so.</p></div>';
+    return;
+  }
+
+  statusText.textContent = `Watching ${me.email}`;
+  statusActions.innerHTML = '<button class="ghost small" id="syncBtn">Sync now</button>';
+  document.getElementById('syncBtn').onclick = async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = 'Reading inbox…';
+    const result = await api('/api/sync', { method: 'POST' });
+    e.target.disabled = false;
+    e.target.textContent = 'Sync now';
+    render();
+  };
+
+  const subs = await api('/api/subscriptions');
+  if (!subs.length) {
+    list.innerHTML = '<div class="empty"><strong>No subscriptions found yet.</strong><p>Hit "Sync now" to have the agent scan your inbox for the first time.</p></div>';
+    return;
+  }
+
+  list.innerHTML = subs.map((s) => {
+    const dateField = s.is_free_trial ? s.trial_ends_at : s.next_renewal_date;
+    const days = daysUntil(dateField);
+    return `
+    <div class="row">
+      <div class="merchant">${s.merchant_name}
+        <span class="meta">${s.is_free_trial ? 'Free trial' : (s.billing_cycle || 'monthly')} · ${s.management_mode === 'card_managed' ? 'card-protected' : 'notify only'}</span>
+      </div>
+      <div class="renewal">${fmtDate(dateField)}${days !== null ? `<span class="countdown">${countdownLabel(days)}</span>` : ''}</div>
+      <div class="amount">${s.amount ? (CURRENCY_SYMBOL[s.currency] || s.currency + ' ') + Number(s.amount).toLocaleString() : '—'}</div>
+      <div>
+        <span class="pill ${s.status}">${statusLabel(s.status)}</span>
+        ${s.status === 'paused' ? `<button class="ghost small" onclick="resume(${s.id})" style="margin-left:8px">Resume</button>` : ''}
+        ${s.management_mode === 'notify_only' && s.status !== 'paused' ? `<button class="ghost small" onclick="enableCard(${s.id})" style="margin-left:8px">Enable auto-freeze</button>` : ''}
+      </div>
+    </div>
+  `;
+  }).join('');
+}
+
+async function resume(id) {
+  await api(`/api/subscriptions/${id}/resume`, { method: 'POST' });
+  render();
+}
+
+async function enableCard(id) {
+  const result = await api(`/api/subscriptions/${id}/enable-card`, { method: 'POST' });
+  if (result.error) alert(result.error);
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
